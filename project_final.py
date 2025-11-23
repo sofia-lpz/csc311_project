@@ -55,7 +55,8 @@ def find_best_model(train_df, val_df, model_family='knn', max_features=50, use_t
             'model': best trained model,
             'feature_combo': best feature combination,
             'accuracy': best validation accuracy,
-            'hyperparameters': best hyperparameters found
+            'hyperparameters': best hyperparameters found,
+            'encoders': fitted encoders from training data
         }
     """
     
@@ -63,8 +64,10 @@ def find_best_model(train_df, val_df, model_family='knn', max_features=50, use_t
     best_overall_model = None
     best_overall_combo = None
     best_overall_params = None
+    best_overall_encoders = None
 
-    all_feature_combos = ['ratings, best_tasks, subopt_tasks, text']
+    # Get all possible feature combinations
+    all_feature_combos = feature_combinations()
     
     print(f"\n{'='*80}")
     print(f"Testing {model_family.upper()} with {len(all_feature_combos)} feature combinations")
@@ -80,6 +83,7 @@ def find_best_model(train_df, val_df, model_family='knn', max_features=50, use_t
                 train_df, 
                 max_features=max_features,
                 use_tfidf=use_tfidf,
+                feature_combo=feature_combo,
                 fitted_encoders=None  # Fit new encoders on training data
             )
             
@@ -88,6 +92,7 @@ def find_best_model(train_df, val_df, model_family='knn', max_features=50, use_t
                 val_df, 
                 max_features=max_features,
                 use_tfidf=use_tfidf,
+                feature_combo=feature_combo,
                 fitted_encoders=encoders  # Use encoders from training
             )
             
@@ -125,6 +130,7 @@ def find_best_model(train_df, val_df, model_family='knn', max_features=50, use_t
                 best_overall_accuracy = val_accuracy
                 best_overall_model = model
                 best_overall_combo = feature_combo
+                best_overall_encoders = encoders
                 best_overall_params = {
                     'max_features': max_features,
                     'use_tfidf': use_tfidf,
@@ -158,7 +164,8 @@ def find_best_model(train_df, val_df, model_family='knn', max_features=50, use_t
         'model': best_overall_model,
         'feature_combo': best_overall_combo,
         'accuracy': best_overall_accuracy,
-        'hyperparameters': best_overall_params
+        'hyperparameters': best_overall_params,
+        'encoders': best_overall_encoders
     }
 
 """model testing functions"""
@@ -175,7 +182,7 @@ def best_knn_model(X_train, y_train, X_val, y_val):
     Returns:
         Trained kNN model with best k
     """
-    k_values = [1, 3, 5, 7, 9, 11, 13, 15]  # Fixed typo from k_vales
+    k_values = [1, 3, 5]
     distances = ['euclidean', 'manhattan', 'cosine']
     weights = ['uniform', 'distance']
     
@@ -213,18 +220,18 @@ def best_knn_model(X_train, y_train, X_val, y_val):
                 except Exception as e:
                     # Handle cases where certain combinations might fail
                     # (e.g., cosine distance with certain data)
-                    print(f"Failed for k={k}, distance={distance}, weight={weight}: {e}")
+                    print(f"    Failed for k={k}, distance={distance}, weight={weight}: {e}")
                     continue
     
     # Print best configuration found
     if best_model is not None:
-        print(f"Best kNN model found:")
-        print(f"  k={best_params['k']}")
-        print(f"  distance={best_params['distance']}")
-        print(f"  weight={best_params['weight']}")
-        print(f"  validation accuracy={best_params['accuracy']:.4f}")
+        print(f"  Best kNN model found:")
+        print(f"    k={best_params['k']}")
+        print(f"    distance={best_params['distance']}")
+        print(f"    weight={best_params['weight']}")
+        print(f"    validation accuracy={best_params['accuracy']:.4f}")
     else:
-        print("No valid kNN model found!")
+        print("  No valid kNN model found!")
     
     return best_model
 
@@ -604,7 +611,7 @@ def extract_rating(response):
     match = re.match(r'^(\d+)', str(response))
     return int(match.group(1)) if match else None
 
-def split(df, train_ratio=0.8, val_ratio=0.05, random_state=42):
+def split(df, train_ratio=0.8, val_ratio=0.1, random_state=42):
     unique_students = df['student_id'].unique()
     n_students = len(unique_students)
     
@@ -645,16 +652,25 @@ def feature_combinations():
     
     return all_combos
 
-def calculate_f1_score(y_true, y_pred, average='binary', pos_label=1):
-    """Calculate F1 score."""
-    return f1_score(y_true, y_pred, average=average, pos_label=pos_label, zero_division=0)
+def calculate_f1_score(y_true, y_pred, pos_label=1):
+    """Calculate F1 score, automatically handling binary or multiclass."""
+    unique_labels = np.unique(np.concatenate([y_true, y_pred]))
+    if len(unique_labels) > 2:
+        # Multiclass - use macro average
+        return f1_score(y_true, y_pred, average='macro', zero_division=0)
+    else:
+        # Binary classification
+        return f1_score(y_true, y_pred, pos_label=pos_label, average='binary', zero_division=0)
 
-
-def calculate_precision(y_true, y_pred, average='binary', pos_label=1):
-    """Calculate precision score."""
-    return precision_score(y_true, y_pred, average=average, pos_label=pos_label, zero_division=0)
-
-
+def calculate_precision(y_true, y_pred, pos_label=1):
+    """Calculate precision score, automatically handling binary or multiclass."""
+    unique_labels = np.unique(np.concatenate([y_true, y_pred]))
+    if len(unique_labels) > 2:
+        # Multiclass - use macro average
+        return precision_score(y_true, y_pred, average='macro', zero_division=0)
+    else:
+        # Binary classification
+        return precision_score(y_true, y_pred, pos_label=pos_label, average='binary', zero_division=0)
 def plot_confusion_matrix(y_true, y_pred, labels=None, normalize=False, 
                          title='Confusion Matrix', cmap='Blues', 
                          figsize=(8, 6), save_path=None):
@@ -691,9 +707,8 @@ def plot_confusion_matrix(y_true, y_pred, labels=None, normalize=False,
 
 def main_comprehensive():
     """
-    Alternative main function that tests ALL feature combinations
-    to find the absolute best Naive Bayes model configuration.
-    This is more thorough but takes longer to run.
+    Main function that tests ALL feature combinations
+    to find the absolute best kNN model configuration.
     """
     # Load processed data
     df = pd.read_csv(file_name)
@@ -701,49 +716,65 @@ def main_comprehensive():
     # Split into train/val/test datasets
     train_df, val_df, test_df = split(df)
     
-    # Find best model across all feature combinations
-    result = find_best_model(
+    print("Dataset splits:")
+    print(f"  Training: {len(train_df)} samples")
+    print(f"  Validation: {len(val_df)} samples")
+    print(f"  Test: {len(test_df)} samples")
+    
+    # Find the best kNN model across all feature combinations
+    best_model_result = find_best_model(
         train_df, 
         val_df, 
-        model_family='random_forest',
+        model_family='knn',
         max_features=50,
         use_tfidf=False
     )
     
-    if result['model'] is not None:
-        # Get the best feature combo and retrain on combined train+val
-        best_combo = result['feature_combo']
+    # Evaluate on test set
+    if best_model_result['model'] is not None:
+        print("\n" + "="*80)
+        print("EVALUATING BEST MODEL ON TEST SET")
+        print("="*80)
         
-        # Preprocess with best feature combination
-        X_train, y_train, encoders = preprocess(
-            train_df,
-            feature_combo=best_combo,
-            fitted_encoders=None
-        )
+        # Preprocess test data using the same encoders from training
         X_test, y_test = preprocess(
             test_df,
-            feature_combo=best_combo,
-            fitted_encoders=encoders
+            max_features=best_model_result['hyperparameters']['max_features'],
+            use_tfidf=best_model_result['hyperparameters']['use_tfidf'],
+            feature_combo=best_model_result['feature_combo'],
+            fitted_encoders=best_model_result['encoders']
         )
         
-        # Evaluate best model on test set
-        test_accuracy = result['model'].score(X_test, y_test)
+        # Get predictions
+        y_pred = best_model_result['model'].predict(X_test)
         
-        print(f"\n{'='*80}")
-        print(f"FINAL TEST SET RESULTS")
-        print(f"{'='*80}")
-        print(f"Best feature combination: {best_combo}")
-        print(f"Test accuracy: {test_accuracy:.4f}")
-        print(f"{'='*80}\n")
+        # Calculate metrics
+        test_accuracy = accuracy_score(y_test, y_pred)
+        test_f1 = calculate_f1_score(y_test, y_pred)
+        test_precision = calculate_precision(y_test, y_pred)
+        
+        print(f"\nTest Set Performance:")
+        print(f"  Accuracy: {test_accuracy:.4f}")
+        print(f"  F1 Score: {test_f1:.4f}")
+        print(f"  Precision: {test_precision:.4f}")
+        
+        # Plot confusion matrix
+        fig, ax, cm = plot_confusion_matrix(
+            y_test, 
+            y_pred,
+            labels=['Not Claude', 'Claude'],
+            normalize=True,
+            title='Test Set Confusion Matrix (Normalized)',
+            save_path='knn_confusion_matrix.png'
+        )
+        plt.show()
+        
+        print("\nConfusion matrix saved as 'knn_confusion_matrix.png'")
+        print("="*80)
     else:
-        print("No valid model found!")
+        print("\nNo valid model was found during training!")
 
-    
 
 if __name__ == "__main__":
-    # Option 1: Run standard main (faster, single feature combo)
-    #main()
-    
-    # Option 2: Run comprehensive search (slower, tests all feature combos)
-    # Uncomment the line below to test all feature combinations:
+    # Run comprehensive search to find best kNN model across all feature combinations
     main_comprehensive()
