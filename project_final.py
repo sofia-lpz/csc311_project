@@ -13,6 +13,10 @@ import os
 import re
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import accuracy_score, f1_score, precision_score, confusion_matrix
+
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.naive_bayes import MultinomialNB
@@ -641,17 +645,49 @@ def feature_combinations():
     
     return all_combos
 
-def calculate_accuracy():
-    pass
+def calculate_f1_score(y_true, y_pred, average='binary', pos_label=1):
+    """Calculate F1 score."""
+    return f1_score(y_true, y_pred, average=average, pos_label=pos_label, zero_division=0)
 
-def calculate_f1_score():
-    pass
 
-def calculate_precision():
-    pass
+def calculate_precision(y_true, y_pred, average='binary', pos_label=1):
+    """Calculate precision score."""
+    return precision_score(y_true, y_pred, average=average, pos_label=pos_label, zero_division=0)
 
-def plot_confusion_matrix():
-    pass
+
+def plot_confusion_matrix(y_true, y_pred, labels=None, normalize=False, 
+                         title='Confusion Matrix', cmap='Blues', 
+                         figsize=(8, 6), save_path=None):
+    """Plot confusion matrix."""
+    cm = confusion_matrix(y_true, y_pred)
+    
+    if normalize:
+        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        fmt = '.2%'
+        cm_display = cm * 100
+    else:
+        fmt = 'd'
+        cm_display = cm
+    
+    if labels is None:
+        labels = sorted(np.unique(y_true))
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.heatmap(cm_display, annot=True, fmt=fmt, cmap=cmap,
+                xticklabels=labels, yticklabels=labels,
+                cbar_kws={'label': 'Percentage' if normalize else 'Count'}, ax=ax)
+    
+    ax.set_xlabel('Predicted Label', fontsize=12)
+    ax.set_ylabel('True Label', fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    
+    plt.setp(ax.get_xticklabels(), rotation=45, ha='right', rotation_mode='anchor')
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    
+    return fig, ax, cm
 
 def main_comprehensive():
     """
