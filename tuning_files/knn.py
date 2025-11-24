@@ -48,7 +48,6 @@ def preprocess(df, max_features=20,
                multiselect_tasks=all_multiselect_tasks,
                fitted_encoders=None):
     """Preprocess data with feature extraction."""
-    df = df.dropna()
 
     if fitted_encoders is None:
         X, encoders = build_features(
@@ -142,7 +141,7 @@ def extract_rating(response):
     match = re.match(r'^(\d+)', str(response))
     return int(match.group(1)) if match else None
 
-def split(df, train_ratio=0.7, val_ratio=0.15, random_state=42):
+def split(df, train_ratio=0.7, val_ratio=0.2, random_state=42):
     """Split data by student_id to prevent leakage."""
     unique_students = df['student_id'].unique()
     n_students = len(unique_students)
@@ -247,8 +246,8 @@ def detailed_cross_validation(X, y, df, config, n_folds=5):
     
     # Store results for each fold
     fold_results = []
-    all_y_true = []
-    all_y_pred = []
+    # Removed: all_y_true = []
+    # Removed: all_y_pred = []
     
     print(f"\nRunning {n_folds}-fold cross-validation (grouping by student_id)...")
     print(f"Note: Each student's 3 responses stay together in the same fold.")
@@ -296,9 +295,9 @@ def detailed_cross_validation(X, y, df, config, n_folds=5):
             'overfit_gap': overfit_gap
         })
         
-        # Store predictions for overall confusion matrix
-        all_y_true.extend(y_val_fold)
-        all_y_pred.extend(y_val_pred)
+        # Removed: Store predictions for overall confusion matrix
+        # Removed: all_y_true.extend(y_val_fold)
+        # Removed: all_y_pred.extend(y_val_pred)
         
         # Print fold results
         print(f"{fold:<6} {train_acc:<12.4f} {val_acc:<12.4f} {val_f1:<12.4f} {val_precision:<15.4f} {val_recall:<12.4f} {overfit_gap:<12.4f}")
@@ -324,25 +323,23 @@ def detailed_cross_validation(X, y, df, config, n_folds=5):
     print(f"{'Val Recall':<20} {np.mean(val_recalls):<12.4f} {np.std(val_recalls):<12.4f} {np.min(val_recalls):<12.4f} {np.max(val_recalls):<12.4f}")
     print(f"{'Overfitting Gap':<20} {np.mean(overfit_gaps):<12.4f} {np.std(overfit_gaps):<12.4f} {np.min(overfit_gaps):<12.4f} {np.max(overfit_gaps):<12.4f}")
     
-    # Overall confusion matrix
-    cm = confusion_matrix(all_y_true, all_y_pred)
-    print(f"\nOverall Confusion Matrix (all folds combined):")
-    print(cm)
+    # REMOVED: Overall confusion matrix section
+    # REMOVED: cm = confusion_matrix(all_y_true, all_y_pred)
+    # REMOVED: print(f"\nOverall Confusion Matrix (all folds combined):")
+    # REMOVED: print(cm)
     
-    # Calculate overall metrics
-    unique_labels = np.unique(y)
-    avg_type = 'binary' if len(unique_labels) == 2 else 'macro'
-    
-    overall_acc = accuracy_score(all_y_true, all_y_pred)
-    overall_f1 = f1_score(all_y_true, all_y_pred, average=avg_type, zero_division=0)
-    overall_precision = precision_score(all_y_true, all_y_pred, average=avg_type, zero_division=0)
-    overall_recall = recall_score(all_y_true, all_y_pred, average=avg_type, zero_division=0)
-    
-    print(f"\nOverall Metrics (aggregated across all folds):")
-    print(f"  Accuracy:  {overall_acc:.4f}")
-    print(f"  F1 Score:  {overall_f1:.4f}")
-    print(f"  Precision: {overall_precision:.4f}")
-    print(f"  Recall:    {overall_recall:.4f}")
+    # REMOVED: Calculate overall metrics
+    # REMOVED: unique_labels = np.unique(y)
+    # REMOVED: avg_type = 'binary' if len(unique_labels) == 2 else 'macro'
+    # REMOVED: overall_acc = accuracy_score(all_y_true, all_y_pred)
+    # REMOVED: overall_f1 = f1_score(all_y_true, all_y_pred, average=avg_type, zero_division=0)
+    # REMOVED: overall_precision = precision_score(all_y_true, all_y_pred, average=avg_type, zero_division=0)
+    # REMOVED: overall_recall = recall_score(all_y_true, all_y_pred, average=avg_type, zero_division=0)
+    # REMOVED: print(f"\nOverall Metrics (aggregated across all folds):")
+    # REMOVED: print(f"  Accuracy:  {overall_acc:.4f}")
+    # REMOVED: print(f"  F1 Score:  {overall_f1:.4f}")
+    # REMOVED: print(f"  Precision: {overall_precision:.4f}")
+    # REMOVED: print(f"  Recall:    {overall_recall:.4f}")
     
     return {
         'fold_results': fold_results,
@@ -351,12 +348,8 @@ def detailed_cross_validation(X, y, df, config, n_folds=5):
         'mean_val_f1': np.mean(val_f1s),
         'std_val_f1': np.std(val_f1s),
         'mean_overfit_gap': np.mean(overfit_gaps),
-        'std_overfit_gap': np.std(overfit_gaps),
-        'overall_acc': overall_acc,
-        'overall_f1': overall_f1,
-        'overall_precision': overall_precision,
-        'overall_recall': overall_recall,
-        'confusion_matrix': cm
+        'std_overfit_gap': np.std(overfit_gaps)
+        # REMOVED: 'overall_acc', 'overall_f1', 'overall_precision', 'overall_recall', 'confusion_matrix'
     }
 
 def test_different_k_values(X, y, df, config, k_values, n_folds=5):
@@ -449,6 +442,10 @@ def main_cv_analysis():
     df = pd.read_csv(file_name)
     print(f"   Loaded {len(df)} samples")
     print(f"   Label distribution: {dict(df['label'].value_counts())}")
+
+        # CLEAN FIRST, before splitting
+    df = df.dropna()
+    
     
     # Check student distribution
     n_students = df['student_id'].nunique()

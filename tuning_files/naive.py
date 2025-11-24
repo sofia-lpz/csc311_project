@@ -327,11 +327,6 @@ def detailed_cross_validation(X, y, df, config, n_folds=5):
     print(f"{'Val Recall':<20} {np.mean(val_recalls):<12.4f} {np.std(val_recalls):<12.4f} {np.min(val_recalls):<12.4f} {np.max(val_recalls):<12.4f}")
     print(f"{'Overfitting Gap':<20} {np.mean(overfit_gaps):<12.4f} {np.std(overfit_gaps):<12.4f} {np.min(overfit_gaps):<12.4f} {np.max(overfit_gaps):<12.4f}")
     
-    # Overall confusion matrix
-    cm = confusion_matrix(all_y_true, all_y_pred)
-    print(f"\nOverall Confusion Matrix (all folds combined):")
-    print(cm)
-    
     # Calculate overall metrics
     unique_labels = np.unique(y)
     avg_type = 'binary' if len(unique_labels) == 2 else 'macro'
@@ -358,8 +353,7 @@ def detailed_cross_validation(X, y, df, config, n_folds=5):
         'overall_acc': overall_acc,
         'overall_f1': overall_f1,
         'overall_precision': overall_precision,
-        'overall_recall': overall_recall,
-        'confusion_matrix': cm
+        'overall_recall': overall_recall
     }
 
 def test_different_alpha_values(X, y, df, alpha_values, n_folds=5):
@@ -531,7 +525,7 @@ def main_cv_analysis():
     
     cm_test = confusion_matrix(y_test, y_test_pred)
     
-    # Print formatted confusion matrix
+    # Print formatted confusion matrix for TEST SET ONLY
     unique_test_labels = np.unique(y_test)
     print_confusion_matrix(cm_test, unique_test_labels)
     
