@@ -1,18 +1,18 @@
 """
-Enhanced kNN Model Finder with Feature Selection
-This script implements feature selection to reduce overfitting on 800 training samples.
+Comprehensive Cross-Validation Analysis
+Tests the best model configuration with extensive cross-validation
+to assess stability and get unbiased performance estimates.
 """
 
 import numpy as np
 import pandas as pd
 import re
-from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
-from sklearn.metrics import accuracy_score, f1_score, precision_score, confusion_matrix
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.model_selection import cross_val_score, StratifiedKFold
-from sklearn.feature_selection import SelectKBest, chi2, f_classif, mutual_info_classif
-from itertools import combinations
+from sklearn.model_selection import StratifiedKFold, cross_validate
+from sklearn.feature_selection import SelectKBest, f_classif
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -29,132 +29,23 @@ all_multiselect_tasks = [
     'Writing or editing essays/reports',
 ]
 
-"""Model testing functions with cross-validation"""
-def best_knn_model_cv(X_train, y_train, X_val, y_val, cv_folds=5):
-    """
-    Find the best k for kNN based on cross-validation and validation accuracy.
-    Uses larger k values to reduce overfitting.
-    """
-    # LARGER k values to reduce overfitting on 800 samples
-    k_values = [11, 15, 21, 31, 41, 51]
-    distances = ['euclidean']
-    weights = ['uniform', 'distance']
-    
-    best_cv_score = 0
-    best_model = None
-    best_params = {}
-    
-    # Use stratified k-fold for cross-validation
-    skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-    
-    print(f"    Testing {len(k_values)} k values × {len(distances)} distances × {len(weights)} weights...")
-    
-    # Grid search over all hyperparameter combinations
-    for k in k_values:
-        for distance in distances:
-            for weight in weights:
-                try:
-                    # Create kNN model with current hyperparameters
-                    knn = KNeighborsClassifier(
-                        n_neighbors=k,
-                        metric=distance,
-                        weights=weight
-                    )
-                    
-                    # Perform cross-validation
-                    cv_scores = cross_val_score(
-                        knn, X_train, y_train, 
-                        cv=skf, 
-                        scoring='accuracy',
-                        n_jobs=-1
-                    )
-                    cv_mean = cv_scores.mean()
-                    cv_std = cv_scores.std()
-                    
-                    # Update best model if this is better
-                    if cv_mean > best_cv_score:
-                        # Train on full training set
-                        knn.fit(X_train, y_train)
-                        
-                        # Evaluate on both training and validation sets
-                        train_accuracy = knn.score(X_train, y_train)
-                        val_accuracy = knn.score(X_val, y_val)
-                        
-                        best_cv_score = cv_mean
-                        best_model = knn
-                        best_params = {
-                            'k': k,
-                            'distance': distance,
-                            'weight': weight,
-                            'cv_mean': cv_mean,
-                            'cv_std': cv_std,
-                            'train_accuracy': train_accuracy,
-                            'val_accuracy': val_accuracy
-                        }
-                        
-                except Exception as e:
-                    # Handle cases where certain combinations might fail
-                    continue
-    
-    # Print best configuration found
-    if best_model is not None:
-        print(f"    Best kNN model found:")
-        print(f"      k={best_params['k']}, distance={best_params['distance']}, weight={best_params['weight']}")
-        print(f"      CV accuracy: {best_params['cv_mean']:.4f} (±{best_params['cv_std']:.4f})")
-        print(f"      Train accuracy: {best_params['train_accuracy']:.4f}")
-        print(f"      Val accuracy: {best_params['val_accuracy']:.4f}")
-        
-        # Calculate and display overfitting gap
-        overfit_gap = best_params['train_accuracy'] - best_params['val_accuracy']
-        print(f"      Overfitting gap: {overfit_gap:.4f}")
-    else:
-        print("    No valid kNN model found!")
-    
-    return best_model, best_params
-
-"""Feature Selection Functions"""
-def select_features(X_train, y_train, X_val, X_test, n_features, method='f_classif'):
-    """
-    Select top k features using specified method.
-    
-    Args:
-        X_train, y_train: Training data
-        X_val, X_test: Validation and test data (to transform with same selector)
-        n_features: Number of features to select
-        method: 'f_classif', 'mutual_info', or 'chi2'
-    
-    Returns:
-        Transformed X_train, X_val, X_test, and the selector
-    """
-    # Choose scoring function
-    if method == 'f_classif':
-        score_func = f_classif
-    elif method == 'mutual_info':
-        score_func = mutual_info_classif
-    elif method == 'chi2':
-        score_func = chi2
-    else:
-        raise ValueError(f"Unknown method: {method}")
-    
-    # Create and fit selector
-    selector = SelectKBest(score_func=score_func, k=min(n_features, X_train.shape[1]))
-    
-    X_train_selected = selector.fit_transform(X_train, y_train)
-    X_val_selected = selector.transform(X_val)
-    X_test_selected = selector.transform(X_test)
-    
-    return X_train_selected, X_val_selected, X_test_selected, selector
+# Best configuration found
+BEST_CONFIG = {
+    'feature_combo': ('ratings', 'best_tasks', 'subopt_tasks'),
+    'n_features': 10,
+    'k': 21,
+    'distance': 'euclidean',
+    'weight': 'uniform',
+    'selection_method': 'f_classif'
+}
 
 """Preprocessing functions"""
-def preprocess(df, max_features=20,  # REDUCED from 50 to 20
+def preprocess(df, max_features=20, 
                use_tfidf=True, 
-               feature_combo = ('ratings', 'best_tasks', 'subopt_tasks', 'text'), 
+               feature_combo = ('ratings', 'best_tasks', 'subopt_tasks'), 
                multiselect_tasks=all_multiselect_tasks,
                fitted_encoders=None):
-    """
-    Preprocess data with feature extraction.
-    Using max_features=20 instead of 50 to reduce dimensionality.
-    """
+    """Preprocess data with feature extraction."""
     df = df.dropna()
 
     if fitted_encoders is None:
@@ -225,18 +116,6 @@ def build_features(df, feature_combo, multiselect_tasks=all_multiselect_tasks,
         
         features_list.append(suboptimal_tasks_encoded)
     
-    # Text features
-    if 'text' in feature_combo:
-        if fitted_encoders is None:
-            text_features, text_encoders = one_hot_encode(df, max_features=max_features, 
-                                                         use_tfidf=use_tfidf, fitted_vectorizers=None)
-            encoders['text_vectorizers'] = text_encoders
-        else:
-            text_features, _ = one_hot_encode(df, max_features=max_features, use_tfidf=use_tfidf, 
-                                             fitted_vectorizers=fitted_encoders.get('text_vectorizers'))
-        
-        features_list.append(text_features)
-    
     # Combine all selected features
     if features_list:
         X = np.hstack(features_list)
@@ -245,47 +124,6 @@ def build_features(df, feature_combo, multiselect_tasks=all_multiselect_tasks,
     
     return (X, encoders) if fitted_encoders is None else (X, None)
 
-"""Helper functions"""
-def one_hot_encode(df, max_features=20, use_tfidf=True, fitted_vectorizers=None):
-    """Encode text columns using CountVectorizer or TfidfVectorizer."""
-    Vectorizer = TfidfVectorizer if use_tfidf else CountVectorizer
-
-    text_columns = [
-        "In your own words, what kinds of tasks would you use this model for?",
-        "Think of one task where this model gave you a suboptimal response. What did the response look like, and why did you find it suboptimal?",
-        "When you verify a response from this model, how do you usually go about it?"
-    ]
-    
-    encoded_features = []
-    vectorizers = [] if fitted_vectorizers is None else fitted_vectorizers
-    
-    for i, col in enumerate(text_columns):
-        if col in df.columns:
-            text_data = df[col].fillna('')
-            
-            if fitted_vectorizers is None:
-                vectorizer = Vectorizer(
-                    max_features=max_features,
-                    stop_words='english',
-                    min_df=2,
-                    lowercase=True,
-                    token_pattern=r'\b[a-zA-Z]{3,}\b'
-                )
-                features = vectorizer.fit_transform(text_data)
-                vectorizers.append(vectorizer)
-            else:
-                vectorizer = fitted_vectorizers[i]
-                features = vectorizer.transform(text_data)
-            
-            encoded_features.append(features.toarray())
-    
-    if encoded_features:
-        combined = np.hstack(encoded_features)
-    else:
-        combined = np.array([]).reshape(len(df), 0)
-    
-    return (combined, vectorizers) if fitted_vectorizers is None else (combined, None)
-    
 def process_multiselect(series, multiselect_tasks):
     """Convert multiselect strings to lists, keeping only specified features"""
     processed = []
@@ -323,257 +161,339 @@ def split(df, train_ratio=0.8, val_ratio=0.1, random_state=42):
     
     return train_df, val_df, test_df
 
-def feature_combinations():
-    """Return all non-empty combinations of feature groups."""
-    feature_groups = ['ratings', 'best_tasks', 'subopt_tasks']
-    
-    all_combos = []
-    for r in range(1, len(feature_groups) + 1):
-        all_combos.extend(combinations(feature_groups, r))
-    
-    return all_combos
-
-def calculate_f1_score(y_true, y_pred, pos_label=1):
-    """Calculate F1 score, automatically handling binary or multiclass."""
-    unique_labels = np.unique(np.concatenate([y_true, y_pred]))
-    if len(unique_labels) > 2:
-        return f1_score(y_true, y_pred, average='macro', zero_division=0)
-    else:
-        return f1_score(y_true, y_pred, pos_label=pos_label, average='binary', zero_division=0)
-
-def calculate_precision(y_true, y_pred, pos_label=1):
-    """Calculate precision score, automatically handling binary or multiclass."""
-    unique_labels = np.unique(np.concatenate([y_true, y_pred]))
-    if len(unique_labels) > 2:
-        return precision_score(y_true, y_pred, average='macro', zero_division=0)
-    else:
-        return precision_score(y_true, y_pred, pos_label=pos_label, average='binary', zero_division=0)
-
-def main_with_feature_selection():
+def detailed_cross_validation(X, y, config, n_folds=10):
     """
-    Main function that tests feature combinations WITH feature selection
-    to combat overfitting on 800 training samples.
+    Perform detailed k-fold cross-validation with per-fold reporting.
+    
+    Args:
+        X: Feature matrix
+        y: Labels
+        config: Model configuration dictionary
+        n_folds: Number of CV folds
+    
+    Returns:
+        Dictionary with detailed CV results
+    """
+    print(f"\n{'='*80}")
+    print(f"DETAILED {n_folds}-FOLD CROSS-VALIDATION")
+    print(f"{'='*80}")
+    
+    # Create the model
+    model = KNeighborsClassifier(
+        n_neighbors=config['k'],
+        metric=config['distance'],
+        weights=config['weight']
+    )
+    
+    # Create stratified k-fold
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    
+    # Store results for each fold
+    fold_results = []
+    all_y_true = []
+    all_y_pred = []
+    
+    print(f"\nRunning {n_folds}-fold cross-validation...")
+    print(f"{'Fold':<6} {'Train Acc':<12} {'Val Acc':<12} {'Val F1':<12} {'Val Precision':<15} {'Val Recall':<12} {'Overfit Gap':<12}")
+    print("-"*95)
+    
+    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
+        # Split data
+        X_train_fold, X_val_fold = X[train_idx], X[val_idx]
+        y_train_fold, y_val_fold = y[train_idx], y[val_idx]
+        
+        # Apply feature selection
+        selector = SelectKBest(score_func=f_classif, k=min(config['n_features'], X_train_fold.shape[1]))
+        X_train_selected = selector.fit_transform(X_train_fold, y_train_fold)
+        X_val_selected = selector.transform(X_val_fold)
+        
+        # Train model
+        model.fit(X_train_selected, y_train_fold)
+        
+        # Predict
+        y_train_pred = model.predict(X_train_selected)
+        y_val_pred = model.predict(X_val_selected)
+        
+        # Calculate metrics
+        train_acc = accuracy_score(y_train_fold, y_train_pred)
+        val_acc = accuracy_score(y_val_fold, y_val_pred)
+        
+        # Detect if binary or multiclass
+        unique_labels = np.unique(y)
+        avg_type = 'binary' if len(unique_labels) == 2 else 'macro'
+        
+        val_f1 = f1_score(y_val_fold, y_val_pred, average=avg_type, zero_division=0)
+        val_precision = precision_score(y_val_fold, y_val_pred, average=avg_type, zero_division=0)
+        val_recall = recall_score(y_val_fold, y_val_pred, average=avg_type, zero_division=0)
+        overfit_gap = train_acc - val_acc
+        
+        # Store results
+        fold_results.append({
+            'fold': fold,
+            'train_acc': train_acc,
+            'val_acc': val_acc,
+            'val_f1': val_f1,
+            'val_precision': val_precision,
+            'val_recall': val_recall,
+            'overfit_gap': overfit_gap
+        })
+        
+        # Store predictions for overall confusion matrix
+        all_y_true.extend(y_val_fold)
+        all_y_pred.extend(y_val_pred)
+        
+        # Print fold results
+        print(f"{fold:<6} {train_acc:<12.4f} {val_acc:<12.4f} {val_f1:<12.4f} {val_precision:<15.4f} {val_recall:<12.4f} {overfit_gap:<12.4f}")
+    
+    print("-"*95)
+    
+    # Calculate statistics across folds
+    train_accs = [r['train_acc'] for r in fold_results]
+    val_accs = [r['val_acc'] for r in fold_results]
+    val_f1s = [r['val_f1'] for r in fold_results]
+    val_precisions = [r['val_precision'] for r in fold_results]
+    val_recalls = [r['val_recall'] for r in fold_results]
+    overfit_gaps = [r['overfit_gap'] for r in fold_results]
+    
+    # Print summary statistics
+    print(f"\n{'SUMMARY STATISTICS'}")
+    print(f"{'Metric':<20} {'Mean':<12} {'Std':<12} {'Min':<12} {'Max':<12}")
+    print("-"*70)
+    print(f"{'Train Accuracy':<20} {np.mean(train_accs):<12.4f} {np.std(train_accs):<12.4f} {np.min(train_accs):<12.4f} {np.max(train_accs):<12.4f}")
+    print(f"{'Val Accuracy':<20} {np.mean(val_accs):<12.4f} {np.std(val_accs):<12.4f} {np.min(val_accs):<12.4f} {np.max(val_accs):<12.4f}")
+    print(f"{'Val F1 Score':<20} {np.mean(val_f1s):<12.4f} {np.std(val_f1s):<12.4f} {np.min(val_f1s):<12.4f} {np.max(val_f1s):<12.4f}")
+    print(f"{'Val Precision':<20} {np.mean(val_precisions):<12.4f} {np.std(val_precisions):<12.4f} {np.min(val_precisions):<12.4f} {np.max(val_precisions):<12.4f}")
+    print(f"{'Val Recall':<20} {np.mean(val_recalls):<12.4f} {np.std(val_recalls):<12.4f} {np.min(val_recalls):<12.4f} {np.max(val_recalls):<12.4f}")
+    print(f"{'Overfitting Gap':<20} {np.mean(overfit_gaps):<12.4f} {np.std(overfit_gaps):<12.4f} {np.min(overfit_gaps):<12.4f} {np.max(overfit_gaps):<12.4f}")
+    
+    # Overall confusion matrix
+    cm = confusion_matrix(all_y_true, all_y_pred)
+    print(f"\nOverall Confusion Matrix (all folds combined):")
+    print(cm)
+    
+    # Calculate overall metrics
+    unique_labels = np.unique(y)
+    avg_type = 'binary' if len(unique_labels) == 2 else 'macro'
+    
+    overall_acc = accuracy_score(all_y_true, all_y_pred)
+    overall_f1 = f1_score(all_y_true, all_y_pred, average=avg_type, zero_division=0)
+    overall_precision = precision_score(all_y_true, all_y_pred, average=avg_type, zero_division=0)
+    overall_recall = recall_score(all_y_true, all_y_pred, average=avg_type, zero_division=0)
+    
+    print(f"\nOverall Metrics (aggregated across all folds):")
+    print(f"  Accuracy:  {overall_acc:.4f}")
+    print(f"  F1 Score:  {overall_f1:.4f}")
+    print(f"  Precision: {overall_precision:.4f}")
+    print(f"  Recall:    {overall_recall:.4f}")
+    
+    return {
+        'fold_results': fold_results,
+        'mean_val_acc': np.mean(val_accs),
+        'std_val_acc': np.std(val_accs),
+        'mean_val_f1': np.mean(val_f1s),
+        'std_val_f1': np.std(val_f1s),
+        'mean_overfit_gap': np.mean(overfit_gaps),
+        'std_overfit_gap': np.std(overfit_gaps),
+        'overall_acc': overall_acc,
+        'overall_f1': overall_f1,
+        'overall_precision': overall_precision,
+        'overall_recall': overall_recall,
+        'confusion_matrix': cm
+    }
+
+def test_different_k_values(X, y, config, k_values, n_folds=10):
+    """
+    Test different k values with cross-validation to find optimal k.
+    
+    Args:
+        X: Feature matrix
+        y: Labels
+        config: Base configuration (will vary k)
+        k_values: List of k values to test
+        n_folds: Number of CV folds
+    """
+    print(f"\n{'='*80}")
+    print(f"TESTING DIFFERENT K VALUES")
+    print(f"{'='*80}")
+    
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    
+    results = []
+    
+    print(f"\n{'k':<8} {'Mean Val Acc':<15} {'Std Val Acc':<15} {'Mean Overfit':<15} {'Std Overfit':<15}")
+    print("-"*70)
+    
+    for k in k_values:
+        # Create model with this k
+        model = KNeighborsClassifier(
+            n_neighbors=k,
+            metric=config['distance'],
+            weights=config['weight']
+        )
+        
+        val_accs = []
+        overfit_gaps = []
+        
+        for train_idx, val_idx in skf.split(X, y):
+            # Split data
+            X_train_fold, X_val_fold = X[train_idx], X[val_idx]
+            y_train_fold, y_val_fold = y[train_idx], y[val_idx]
+            
+            # Apply feature selection
+            selector = SelectKBest(score_func=f_classif, k=min(config['n_features'], X_train_fold.shape[1]))
+            X_train_selected = selector.fit_transform(X_train_fold, y_train_fold)
+            X_val_selected = selector.transform(X_val_fold)
+            
+            # Train and evaluate
+            model.fit(X_train_selected, y_train_fold)
+            
+            train_acc = model.score(X_train_selected, y_train_fold)
+            val_acc = model.score(X_val_selected, y_val_fold)
+            
+            val_accs.append(val_acc)
+            overfit_gaps.append(train_acc - val_acc)
+        
+        mean_val_acc = np.mean(val_accs)
+        std_val_acc = np.std(val_accs)
+        mean_overfit = np.mean(overfit_gaps)
+        std_overfit = np.std(overfit_gaps)
+        
+        results.append({
+            'k': k,
+            'mean_val_acc': mean_val_acc,
+            'std_val_acc': std_val_acc,
+            'mean_overfit': mean_overfit,
+            'std_overfit': std_overfit
+        })
+        
+        print(f"{k:<8} {mean_val_acc:<15.4f} {std_val_acc:<15.4f} {mean_overfit:<15.4f} {std_overfit:<15.4f}")
+    
+    # Find best k
+    best_result = max(results, key=lambda x: x['mean_val_acc'])
+    print(f"\nBest k: {best_result['k']} (Val Acc: {best_result['mean_val_acc']:.4f})")
+    
+    return results
+
+def main_cv_analysis():
+    """
+    Main function to perform comprehensive cross-validation analysis.
     """
     print("="*80)
-    print("kNN MODEL SEARCH WITH FEATURE SELECTION (800 samples)")
+    print("COMPREHENSIVE CROSS-VALIDATION ANALYSIS")
     print("="*80)
     
-    # Load processed data
+    # Load data
     print("\n1. Loading data...")
     df = pd.read_csv(file_name)
     print(f"   Loaded {len(df)} samples")
     print(f"   Label distribution: {dict(df['label'].value_counts())}")
     
-    # Split into train/val/test datasets
-    print("\n2. Splitting data by student_id...")
+    # Split data (keep test set held out)
+    print("\n2. Splitting data...")
     train_df, val_df, test_df = split(df)
-    print(f"   Train: {len(train_df)} samples")
-    print(f"   Val: {len(val_df)} samples")
-    print(f"   Test: {len(test_df)} samples")
     
-    # Get all feature combinations to test
-    all_combos = feature_combinations()
-    print(f"\n3. Testing {len(all_combos)} feature combinations with feature selection...")
+    # Combine train and val for cross-validation
+    train_val_df = pd.concat([train_df, val_df], ignore_index=True)
+    print(f"   Train+Val: {len(train_val_df)} samples (for CV)")
+    print(f"   Test: {len(test_df)} samples (held out)")
     
-    # Feature selection parameters
-    n_features_to_test = [10, 15, 20, 30, 40, 50]  # Different numbers of features to keep
-    selection_methods = ['f_classif', 'mutual_info']  # Feature selection methods
+    # Preprocess train+val data
+    print(f"\n3. Preprocessing data with config: {BEST_CONFIG['feature_combo']}...")
+    X_train_val, y_train_val, encoders = preprocess(
+        train_val_df,
+        max_features=20,
+        use_tfidf=True,
+        feature_combo=BEST_CONFIG['feature_combo'],
+        fitted_encoders=None
+    )
+    print(f"   Feature matrix shape: {X_train_val.shape}")
     
-    # Track best overall model
-    best_overall_score = 0
-    best_overall_model = None
-    best_overall_config = {}
-    results = []
+    # Detect classification type
+    unique_labels = np.unique(y_train_val)
+    print(f"   Number of classes: {len(unique_labels)}")
+    print(f"   Class labels: {unique_labels}")
+    print(f"   Classification type: {'Binary' if len(unique_labels) == 2 else 'Multiclass'}")
     
-    # Test each feature combination
-    for i, combo in enumerate(all_combos, 1):
-        print(f"\n{'='*80}")
-        print(f"Combination {i}/{len(all_combos)}: {combo}")
-        print(f"{'='*80}")
-        
-        try:
-            # Preprocess training data (fit encoders)
-            X_train_full, y_train, encoders = preprocess(
-                train_df, 
-                max_features=20,  # Reduced from 50
-                use_tfidf=True,
-                feature_combo=combo,
-                fitted_encoders=None
-            )
-            
-            # Preprocess validation and test data (use fitted encoders)
-            X_val_full, y_val = preprocess(
-                val_df,
-                max_features=20,
-                use_tfidf=True,
-                feature_combo=combo,
-                fitted_encoders=encoders
-            )
-            
-            X_test_full, y_test = preprocess(
-                test_df,
-                max_features=20,
-                use_tfidf=True,
-                feature_combo=combo,
-                fitted_encoders=encoders
-            )
-            
-            print(f"Initial feature matrix shape: {X_train_full.shape}")
-            
-            # Try different feature selection configurations
-            for method in selection_methods:
-                for n_features in n_features_to_test:
-                    if n_features >= X_train_full.shape[1]:
-                        # Skip if we're trying to select more features than we have
-                        continue
-                    
-                    print(f"\n--- Method: {method}, Features: {n_features} ---")
-                    
-                    # Apply feature selection
-                    X_train, X_val, X_test, selector = select_features(
-                        X_train_full, y_train, X_val_full, X_test_full,
-                        n_features=n_features,
-                        method=method
-                    )
-                    
-                    print(f"  Selected feature matrix shape: {X_train.shape}")
-                    
-                    # Find best kNN model for this configuration
-                    model, params = best_knn_model_cv(X_train, y_train, X_val, y_val, cv_folds=5)
-                    
-                    if model is not None:
-                        # Calculate training metrics
-                        y_train_pred = model.predict(X_train)
-                        train_acc = accuracy_score(y_train, y_train_pred)
-                        train_f1 = calculate_f1_score(y_train, y_train_pred)
-                        
-                        # Calculate validation metrics
-                        y_val_pred = model.predict(X_val)
-                        val_acc = accuracy_score(y_val, y_val_pred)
-                        val_f1 = calculate_f1_score(y_val, y_val_pred)
-                        
-                        # Calculate test metrics
-                        y_test_pred = model.predict(X_test)
-                        test_acc = accuracy_score(y_test, y_test_pred)
-                        test_f1 = calculate_f1_score(y_test, y_test_pred)
-                        
-                        # Calculate overfitting indicators
-                        overfit_gap = train_acc - val_acc
-                        
-                        print(f"  Performance:")
-                        print(f"    Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f} | Test Acc: {test_acc:.4f}")
-                        print(f"    Overfit gap: {overfit_gap:.4f}")
-                        
-                        # Store results
-                        result = {
-                            'combo': combo,
-                            'method': method,
-                            'n_features': n_features,
-                            'initial_features': X_train_full.shape[1],
-                            'cv_mean': params['cv_mean'],
-                            'cv_std': params['cv_std'],
-                            'train_acc': train_acc,
-                            'val_acc': val_acc,
-                            'test_acc': test_acc,
-                            'train_f1': train_f1,
-                            'val_f1': val_f1,
-                            'test_f1': test_f1,
-                            'overfit_gap': overfit_gap,
-                            'k': params['k'],
-                            'distance': params['distance'],
-                            'weight': params['weight']
-                        }
-                        results.append(result)
-                        
-                        # Update best overall model based on validation accuracy
-                        # and considering overfitting gap
-                        if val_acc > best_overall_score and overfit_gap < 0.15:
-                            best_overall_score = val_acc
-                            best_overall_model = model
-                            best_overall_config = {
-                                'combo': combo,
-                                'encoders': encoders,
-                                'selector': selector,
-                                'method': method,
-                                'n_features': n_features,
-                                'params': params,
-                                'train_acc': train_acc,
-                                'val_acc': val_acc,
-                                'test_acc': test_acc,
-                                'train_f1': train_f1,
-                                'val_f1': val_f1,
-                                'test_f1': test_f1,
-                                'overfit_gap': overfit_gap
-                            }
-                            print(f"  *** NEW BEST MODEL (Val Acc: {val_acc:.4f}) ***")
-                        
-        except Exception as e:
-            print(f"  Error with combination {combo}: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
+    # Perform detailed 10-fold cross-validation
+    print(f"\n4. Running 10-fold cross-validation with best configuration...")
+    cv_results = detailed_cross_validation(X_train_val, y_train_val, BEST_CONFIG, n_folds=10)
     
-    # Print summary of results
-    print("\n" + "="*80)
-    print("RESULTS SUMMARY")
-    print("="*80)
+    # Test different k values
+    print(f"\n5. Testing different k values around optimal k={BEST_CONFIG['k']}...")
+    k_values = [11, 15, 19, 21, 23, 25, 31, 41]
+    k_results = test_different_k_values(X_train_val, y_train_val, BEST_CONFIG, k_values, n_folds=10)
     
-    # Sort by validation accuracy (prioritizing generalization)
-    results_sorted = sorted(results, key=lambda x: x['val_acc'], reverse=True)
+    # Final evaluation on held-out test set
+    print(f"\n{'='*80}")
+    print("FINAL EVALUATION ON HELD-OUT TEST SET")
+    print(f"{'='*80}")
     
-    print(f"\nTop 15 models by VALIDATION accuracy:")
-    print(f"{'Rank':<5} {'Features':<25} {'Method':<12} {'#Feat':<7} {'Train':<8} {'Val':<8} {'Test':<8} {'Gap':<7} {'k':<5}")
-    print("-"*110)
+    # Preprocess test data
+    X_test, y_test = preprocess(
+        test_df,
+        max_features=20,
+        use_tfidf=True,
+        feature_combo=BEST_CONFIG['feature_combo'],
+        fitted_encoders=encoders
+    )
     
-    for rank, r in enumerate(results_sorted[:15], 1):
-        combo_str = '+'.join(r['combo'])
-        print(f"{rank:<5} {combo_str:<25} {r['method']:<12} {r['n_features']:<7} {r['train_acc']:.4f}   {r['val_acc']:.4f}   {r['test_acc']:.4f}   {r['overfit_gap']:.4f}  {r['k']:<5}")
+    # Apply feature selection
+    selector = SelectKBest(score_func=f_classif, k=min(BEST_CONFIG['n_features'], X_train_val.shape[1]))
+    X_train_val_selected = selector.fit_transform(X_train_val, y_train_val)
+    X_test_selected = selector.transform(X_test)
     
-    # Also show models with smallest overfitting gap
-    print(f"\n\nTop 10 models by SMALLEST overfitting gap:")
-    results_by_gap = sorted(results, key=lambda x: x['overfit_gap'])
+    # Train final model on all train+val data
+    final_model = KNeighborsClassifier(
+        n_neighbors=BEST_CONFIG['k'],
+        metric=BEST_CONFIG['distance'],
+        weights=BEST_CONFIG['weight']
+    )
+    final_model.fit(X_train_val_selected, y_train_val)
     
-    print(f"{'Rank':<5} {'Features':<25} {'Method':<12} {'#Feat':<7} {'Train':<8} {'Val':<8} {'Test':<8} {'Gap':<7} {'k':<5}")
-    print("-"*110)
+    # Evaluate on test set
+    y_train_val_pred = final_model.predict(X_train_val_selected)
+    y_test_pred = final_model.predict(X_test_selected)
     
-    for rank, r in enumerate(results_by_gap[:10], 1):
-        combo_str = '+'.join(r['combo'])
-        print(f"{rank:<5} {combo_str:<25} {r['method']:<12} {r['n_features']:<7} {r['train_acc']:.4f}   {r['val_acc']:.4f}   {r['test_acc']:.4f}   {r['overfit_gap']:.4f}  {r['k']:<5}")
+    # Detect if binary or multiclass
+    unique_labels = np.unique(y_train_val)
+    avg_type = 'binary' if len(unique_labels) == 2 else 'macro'
     
-    # Evaluate best model
-    if best_overall_model is not None:
-        print("\n" + "="*80)
-        print("BEST MODEL (Selected by Val Accuracy with Overfitting < 15%)")
-        print("="*80)
-        
-        print(f"\nConfiguration:")
-        print(f"  Features: {'+'.join(best_overall_config['combo'])}")
-        print(f"  Selection method: {best_overall_config['method']}")
-        print(f"  Number of features: {best_overall_config['n_features']}")
-        print(f"  k={best_overall_config['params']['k']}")
-        print(f"  distance={best_overall_config['params']['distance']}")
-        print(f"  weight={best_overall_config['params']['weight']}")
-        
-        print(f"\n{'Set':<15} {'Accuracy':<12} {'F1 Score':<12}")
-        print("-"*40)
-        print(f"{'Training':<15} {best_overall_config['train_acc']:<12.4f} {best_overall_config['train_f1']:<12.4f}")
-        print(f"{'Validation':<15} {best_overall_config['val_acc']:<12.4f} {best_overall_config['val_f1']:<12.4f}")
-        print(f"{'Test':<15} {best_overall_config['test_acc']:<12.4f} {best_overall_config['test_f1']:<12.4f}")
-        
-        print(f"\nOverfitting Analysis:")
-        print(f"  Train-Val gap: {best_overall_config['train_acc'] - best_overall_config['val_acc']:.4f}")
-        print(f"  Train-Test gap: {best_overall_config['train_acc'] - best_overall_config['test_acc']:.4f}")
-        print(f"  Val-Test gap: {best_overall_config['val_acc'] - best_overall_config['test_acc']:.4f}")
-        
-        print("\n" + "="*80)
-        print("SEARCH COMPLETE!")
-        print("="*80)
-        
-        return best_overall_model, best_overall_config, results_sorted
-    else:
-        print("\nNo valid model found!")
-        return None, None, results_sorted
+    train_val_acc = accuracy_score(y_train_val, y_train_val_pred)
+    test_acc = accuracy_score(y_test, y_test_pred)
+    test_f1 = f1_score(y_test, y_test_pred, average=avg_type, zero_division=0)
+    test_precision = precision_score(y_test, y_test_pred, average=avg_type, zero_division=0)
+    test_recall = recall_score(y_test, y_test_pred, average=avg_type, zero_division=0)
+    
+    print(f"\nFinal Model Performance:")
+    print(f"  Train+Val Accuracy: {train_val_acc:.4f}")
+    print(f"  Test Accuracy:      {test_acc:.4f}")
+    print(f"  Test F1 Score:      {test_f1:.4f}")
+    print(f"  Test Precision:     {test_precision:.4f}")
+    print(f"  Test Recall:        {test_recall:.4f}")
+    print(f"  Overfitting Gap:    {train_val_acc - test_acc:.4f}")
+    
+    cm_test = confusion_matrix(y_test, y_test_pred)
+    print(f"\nTest Set Confusion Matrix:")
+    print(cm_test)
+    
+    # Summary
+    print(f"\n{'='*80}")
+    print("SUMMARY")
+    print(f"{'='*80}")
+    print(f"\nConfiguration: {BEST_CONFIG}")
+    print(f"\n10-Fold CV Results:")
+    print(f"  Mean Val Accuracy:  {cv_results['mean_val_acc']:.4f} ± {cv_results['std_val_acc']:.4f}")
+    print(f"  Mean Val F1 Score:  {cv_results['mean_val_f1']:.4f} ± {cv_results['std_val_f1']:.4f}")
+    print(f"  Mean Overfit Gap:   {cv_results['mean_overfit_gap']:.4f} ± {cv_results['std_overfit_gap']:.4f}")
+    print(f"\nHeld-out Test Set:")
+    print(f"  Test Accuracy:      {test_acc:.4f}")
+    print(f"  Test F1 Score:      {test_f1:.4f}")
+    
+    print(f"\n{'='*80}")
+    print("ANALYSIS COMPLETE!")
+    print(f"{'='*80}")
+    
+    return cv_results, k_results, final_model
 
 if __name__ == "__main__":
-    # Run search with feature selection to combat overfitting
-    best_model, best_config, all_results = main_with_feature_selection()
+    cv_results, k_results, model = main_cv_analysis()
