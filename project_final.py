@@ -611,7 +611,7 @@ def extract_rating(response):
     match = re.match(r'^(\d+)', str(response))
     return int(match.group(1)) if match else None
 
-def split(df, train_ratio=0.8, val_ratio=0.1, random_state=42):
+def split(df, train_ratio=0.7, val_ratio=0.2, random_state=42):
     unique_students = df['student_id'].unique()
     n_students = len(unique_students)
     
@@ -643,7 +643,7 @@ def feature_combinations():
         list of tuples: All possible combinations of feature groups
     """
     # Feature groups to test
-    feature_groups = ['ratings', 'best_tasks', 'subopt_tasks', 'text']
+    feature_groups = ['ratings', 'best_tasks', 'subopt_tasks']
     
     # Generate all non-empty combinations of feature groups
     all_combos = []
@@ -671,39 +671,6 @@ def calculate_precision(y_true, y_pred, pos_label=1):
     else:
         # Binary classification
         return precision_score(y_true, y_pred, pos_label=pos_label, average='binary', zero_division=0)
-def plot_confusion_matrix(y_true, y_pred, labels=None, normalize=False, 
-                         title='Confusion Matrix', cmap='Blues', 
-                         figsize=(8, 6), save_path=None):
-    """Plot confusion matrix."""
-    cm = confusion_matrix(y_true, y_pred)
-    
-    if normalize:
-        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-        fmt = '.2%'
-        cm_display = cm * 100
-    else:
-        fmt = 'd'
-        cm_display = cm
-    
-    if labels is None:
-        labels = sorted(np.unique(y_true))
-    
-    fig, ax = plt.subplots(figsize=figsize)
-    sns.heatmap(cm_display, annot=True, fmt=fmt, cmap=cmap,
-                xticklabels=labels, yticklabels=labels,
-                cbar_kws={'label': 'Percentage' if normalize else 'Count'}, ax=ax)
-    
-    ax.set_xlabel('Predicted Label', fontsize=12)
-    ax.set_ylabel('True Label', fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight='bold')
-    
-    plt.setp(ax.get_xticklabels(), rotation=45, ha='right', rotation_mode='anchor')
-    plt.tight_layout()
-    
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    
-    return fig, ax, cm
 
 def main_comprehensive():
     """
@@ -757,20 +724,7 @@ def main_comprehensive():
         print(f"  Accuracy: {test_accuracy:.4f}")
         print(f"  F1 Score: {test_f1:.4f}")
         print(f"  Precision: {test_precision:.4f}")
-        
-        # Plot confusion matrix
-        fig, ax, cm = plot_confusion_matrix(
-            y_test, 
-            y_pred,
-            labels=['Not Claude', 'Claude'],
-            normalize=True,
-            title='Test Set Confusion Matrix (Normalized)',
-            save_path='knn_confusion_matrix.png'
-        )
-        plt.show()
-        
-        print("\nConfusion matrix saved as 'knn_confusion_matrix.png'")
-        print("="*80)
+
     else:
         print("\nNo valid model was found during training!")
 
