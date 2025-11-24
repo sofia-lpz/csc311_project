@@ -1,7 +1,7 @@
 """
-Comprehensive Cross-Validation Analysis
-Tests the best model configuration with extensive cross-validation
-to assess stability and get unbiased performance estimates.
+Comprehensive Cross-Validation Analysis for Multinomial Naive Bayes
+Tests the model with text features only using count vectorization (no TF-IDF)
+with extensive cross-validation to assess stability and get unbiased performance estimates.
 
 FIXED: Now properly groups by student_id to prevent data leakage.
 """
@@ -9,138 +9,86 @@ FIXED: Now properly groups by student_id to prevent data leakage.
 import numpy as np
 import pandas as pd
 import re
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.model_selection import StratifiedKFold, cross_validate
-from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.naive_bayes import MultinomialNB
 import warnings
 warnings.filterwarnings('ignore')
 
 file_name = "training_data_clean.csv"
 
-all_multiselect_tasks = [
-    'Brainstorming or generating creative ideas',
-    'Converting content between formats (e.g. LaTeX)',
-    'Drafting professional text (e.g. emails, résumés)',
-    'Math computations',
-    'Writing or debugging code',
-    'Data processing or analysis', 
-    'Explaining complex concepts simply',
-    'Writing or editing essays/reports',
-]
-
-# Best configuration found
+# Best configuration found for Naive Bayes
 BEST_CONFIG = {
-    'feature_combo': ('ratings', 'best_tasks', 'subopt_tasks'),
-    'n_features': 10,
-    'k': 21,
-    'distance': 'euclidean',
-    'weight': 'uniform',
-    'selection_method': 'f_classif'
+    'max_features': 100,
+    'alpha': 10.0,
+    'fit_prior': True
 }
 
 """Preprocessing functions"""
-def preprocess(df, max_features=20, 
-               use_tfidf=True, 
-               feature_combo = ('ratings', 'best_tasks', 'subopt_tasks'), 
-               multiselect_tasks=all_multiselect_tasks,
-               fitted_encoders=None):
-    """Preprocess data with feature extraction."""
+def preprocess(df, max_features=100, fitted_encoders=None):
+    """Preprocess data with text feature extraction using CountVectorizer."""
     df = df.dropna()
 
     if fitted_encoders is None:
-        X, encoders = build_features(
-            df, feature_combo, multiselect_tasks=multiselect_tasks, 
-            max_features=max_features, use_tfidf=use_tfidf, fitted_encoders=None
-        )
+        X, encoders = one_hot_encode(df, max_features=max_features, fitted_vectorizers=None)
         y = df['label'].values
         return X, y, encoders
     else:
-        X, _ = build_features(
-            df, feature_combo, multiselect_tasks=multiselect_tasks, 
-            max_features=max_features, use_tfidf=use_tfidf, fitted_encoders=fitted_encoders
-        )
+        X, _ = one_hot_encode(df, max_features=max_features, fitted_vectorizers=fitted_encoders)
         y = df['label'].values
         return X, y
 
-def build_features(df, feature_combo, multiselect_tasks=all_multiselect_tasks, 
-                   max_features=20, use_tfidf=True, fitted_encoders=None):
-    """Build feature matrix based on specified feature combination."""
-    features_list = []
-    encoders = {} if fitted_encoders is None else fitted_encoders
+def one_hot_encode(df, max_features=100, fitted_vectorizers=None):
+    """
+    Encode text columns using CountVectorizer (not TF-IDF).
     
-    # Rating features
-    if 'ratings' in feature_combo:
-        academic_numeric = df['How likely are you to use this model for academic tasks?'].apply(extract_rating)
-        subopt_numeric = df['Based on your experience, how often has this model given you a response that felt suboptimal?'].apply(extract_rating)
-        references_numeric = df['How often do you expect this model to provide responses with references or supporting evidence?'].apply(extract_rating)
-        verified_numeric = df['How often do you verify this model\'s responses?'].apply(extract_rating)
-        
-        features_list.extend([
-            academic_numeric.values.reshape(-1, 1),
-            subopt_numeric.values.reshape(-1, 1),
-            references_numeric.values.reshape(-1, 1),
-            verified_numeric.values.reshape(-1, 1)
-        ])
+    Args:
+        df: DataFrame with text columns
+        max_features: Max features for vectorization
+        fitted_vectorizers: List of fitted vectorizers (None to fit new ones)
     
-    # Multi-select features
-    if 'best_tasks' in feature_combo:
-        best_tasks_lists = process_multiselect(
-            df['Which types of tasks do you feel this model handles best? (Select all that apply.)'], 
-            multiselect_tasks
-        )
-        
-        if fitted_encoders is None:
-            mlb_best = MultiLabelBinarizer()
-            best_tasks_encoded = mlb_best.fit_transform(best_tasks_lists)
-            encoders['mlb_best'] = mlb_best
-        else:
-            mlb_best = fitted_encoders['mlb_best']
-            best_tasks_encoded = mlb_best.transform(best_tasks_lists)
-        
-        features_list.append(best_tasks_encoded)
+    Returns:
+        If fitted_vectorizers is None: (encoded features, list of vectorizers)
+        Otherwise: (encoded features, None)
+    """
+    text_columns = [
+        "In your own words, what kinds of tasks would you use this model for?",
+        "Think of one task where this model gave you a suboptimal response. What did the response look like, and why did you find it suboptimal?",
+        "When you verify a response from this model, how do you usually go about it?"
+    ]
     
-    if 'subopt_tasks' in feature_combo:
-        suboptimal_tasks_lists = process_multiselect(
-            df['For which types of tasks do you feel this model tends to give suboptimal responses? (Select all that apply.)'], 
-            multiselect_tasks
-        )
-        
-        if fitted_encoders is None:
-            mlb_subopt = MultiLabelBinarizer()
-            suboptimal_tasks_encoded = mlb_subopt.fit_transform(suboptimal_tasks_lists)
-            encoders['mlb_subopt'] = mlb_subopt
-        else:
-            mlb_subopt = fitted_encoders['mlb_subopt']
-            suboptimal_tasks_encoded = mlb_subopt.transform(suboptimal_tasks_lists)
-        
-        features_list.append(suboptimal_tasks_encoded)
+    encoded_features = []
+    vectorizers = [] if fitted_vectorizers is None else fitted_vectorizers
     
-    # Combine all selected features
-    if features_list:
-        X = np.hstack(features_list)
+    for i, col in enumerate(text_columns):
+        if col in df.columns:
+            text_data = df[col].fillna('')
+            
+            if fitted_vectorizers is None:
+                # Fit new vectorizer
+                vectorizer = CountVectorizer(
+                    max_features=max_features,
+                    stop_words='english',
+                    min_df=2,
+                    lowercase=True,
+                    token_pattern=r'\b[a-zA-Z]{3,}\b'
+                )
+                features = vectorizer.fit_transform(text_data)
+                vectorizers.append(vectorizer)
+            else:
+                # Use fitted vectorizer
+                vectorizer = fitted_vectorizers[i]
+                features = vectorizer.transform(text_data)
+            
+            encoded_features.append(features.toarray())
+    
+    if encoded_features:
+        combined = np.hstack(encoded_features)
     else:
-        X = np.array([]).reshape(len(df), 0)
+        combined = np.array([]).reshape(len(df), 0)
     
-    return (X, encoders) if fitted_encoders is None else (X, None)
-
-def process_multiselect(series, multiselect_tasks):
-    """Convert multiselect strings to lists, keeping only specified features"""
-    processed = []
-    for response in series:
-        if pd.isna(response) or response == '':
-            processed.append([])
-        else:
-            present_tasks = [task for task in multiselect_tasks if task in str(response)]
-            processed.append(present_tasks)
-    return processed
-
-def extract_rating(response):
-    """Extract numeric rating from responses like '3 - Sometimes'."""
-    match = re.match(r'^(\d+)', str(response))
-    return int(match.group(1)) if match else None
+    # Return vectorizers only if we fitted new ones
+    return (combined, vectorizers) if fitted_vectorizers is None else (combined, None)
 
 def split(df, train_ratio=0.7, val_ratio=0.15, random_state=42):
     """Split data by student_id to prevent leakage."""
@@ -162,6 +110,67 @@ def split(df, train_ratio=0.7, val_ratio=0.15, random_state=42):
     test_df = df[df['student_id'].isin(test_students)].copy()
     
     return train_df, val_df, test_df
+
+def print_confusion_matrix(cm, labels):
+    """
+    Pretty print confusion matrix to terminal.
+    
+    Args:
+        cm: Confusion matrix array
+        labels: Class labels
+    """
+    # Convert labels to strings and find max width
+    label_strs = [str(label) for label in labels]
+    max_label_width = max(len(label) for label in label_strs)
+    max_count_width = max(len(str(cm.max())), 5)  # At least 5 for "Pred"
+    
+    # Calculate column width (max of label width and count width)
+    col_width = max(max_label_width, max_count_width) + 2
+    
+    # Print header
+    print("\n" + "="*80)
+    print("CONFUSION MATRIX")
+    print("="*80)
+    print()
+    
+    # Print column headers (predicted labels)
+    header = "True \\ Pred".ljust(max_label_width + 3)
+    for label in label_strs:
+        header += label.rjust(col_width)
+    print(header)
+    print("-" * len(header))
+    
+    # Print each row
+    for i, true_label in enumerate(label_strs):
+        row = true_label.ljust(max_label_width + 3)
+        for j in range(len(labels)):
+            row += str(cm[i, j]).rjust(col_width)
+        print(row)
+    
+    print()
+    
+    # Calculate per-class metrics
+    print("Per-Class Metrics:")
+    print("-" * 60)
+    print(f"{'Class':<15} {'Precision':<12} {'Recall':<12} {'Support':<12}")
+    print("-" * 60)
+    
+    for i, label in enumerate(label_strs):
+        # True positives for this class
+        tp = cm[i, i]
+        # All predicted as this class
+        predicted_as_class = cm[:, i].sum()
+        # All actually this class
+        actually_class = cm[i, :].sum()
+        
+        # Calculate precision and recall
+        precision = tp / predicted_as_class if predicted_as_class > 0 else 0
+        recall = tp / actually_class if actually_class > 0 else 0
+        
+        print(f"{label:<15} {precision:<12.4f} {recall:<12.4f} {actually_class:<12}")
+    
+    print("="*80)
+    print()
 
 def create_student_cv_folds(df, n_folds=5, random_state=42):
     """
@@ -236,10 +245,9 @@ def detailed_cross_validation(X, y, df, config, n_folds=5):
     print(f"{'='*80}")
     
     # Create the model
-    model = KNeighborsClassifier(
-        n_neighbors=config['k'],
-        metric=config['distance'],
-        weights=config['weight']
+    model = MultinomialNB(
+        alpha=config['alpha'],
+        fit_prior=config['fit_prior']
     )
     
     # Create student-grouped k-fold splits
@@ -260,17 +268,12 @@ def detailed_cross_validation(X, y, df, config, n_folds=5):
         X_train_fold, X_val_fold = X[train_idx], X[val_idx]
         y_train_fold, y_val_fold = y[train_idx], y[val_idx]
         
-        # Apply feature selection
-        selector = SelectKBest(score_func=f_classif, k=min(config['n_features'], X_train_fold.shape[1]))
-        X_train_selected = selector.fit_transform(X_train_fold, y_train_fold)
-        X_val_selected = selector.transform(X_val_fold)
-        
         # Train model
-        model.fit(X_train_selected, y_train_fold)
+        model.fit(X_train_fold, y_train_fold)
         
         # Predict
-        y_train_pred = model.predict(X_train_selected)
-        y_val_pred = model.predict(X_val_selected)
+        y_train_pred = model.predict(X_train_fold)
+        y_val_pred = model.predict(X_val_fold)
         
         # Calculate metrics
         train_acc = accuracy_score(y_train_fold, y_train_pred)
@@ -359,21 +362,19 @@ def detailed_cross_validation(X, y, df, config, n_folds=5):
         'confusion_matrix': cm
     }
 
-def test_different_k_values(X, y, df, config, k_values, n_folds=5):
+def test_different_alpha_values(X, y, df, alpha_values, n_folds=5):
     """
-    Test different k values with cross-validation to find optimal k.
-    FIXED: Now splits by student_id to prevent data leakage.
+    Test different alpha values with cross-validation to find optimal smoothing parameter.
     
     Args:
         X: Feature matrix
         y: Labels
         df: Original dataframe (needed for student_id)
-        config: Base configuration (will vary k)
-        k_values: List of k values to test
+        alpha_values: List of alpha values to test
         n_folds: Number of CV folds
     """
     print(f"\n{'='*80}")
-    print(f"TESTING DIFFERENT K VALUES (Student-Grouped CV)")
+    print(f"TESTING DIFFERENT ALPHA VALUES (Student-Grouped CV)")
     print(f"{'='*80}")
     
     # Create student-grouped k-fold splits
@@ -381,16 +382,12 @@ def test_different_k_values(X, y, df, config, k_values, n_folds=5):
     
     results = []
     
-    print(f"\n{'k':<8} {'Mean Val Acc':<15} {'Std Val Acc':<15} {'Mean Overfit':<15} {'Std Overfit':<15}")
+    print(f"\n{'Alpha':<12} {'Mean Val Acc':<15} {'Std Val Acc':<15} {'Mean Overfit':<15} {'Std Overfit':<15}")
     print("-"*70)
     
-    for k in k_values:
-        # Create model with this k
-        model = KNeighborsClassifier(
-            n_neighbors=k,
-            metric=config['distance'],
-            weights=config['weight']
-        )
+    for alpha in alpha_values:
+        # Create model with this alpha
+        model = MultinomialNB(alpha=alpha, fit_prior=True)
         
         val_accs = []
         overfit_gaps = []
@@ -400,16 +397,11 @@ def test_different_k_values(X, y, df, config, k_values, n_folds=5):
             X_train_fold, X_val_fold = X[train_idx], X[val_idx]
             y_train_fold, y_val_fold = y[train_idx], y[val_idx]
             
-            # Apply feature selection
-            selector = SelectKBest(score_func=f_classif, k=min(config['n_features'], X_train_fold.shape[1]))
-            X_train_selected = selector.fit_transform(X_train_fold, y_train_fold)
-            X_val_selected = selector.transform(X_val_fold)
-            
             # Train and evaluate
-            model.fit(X_train_selected, y_train_fold)
+            model.fit(X_train_fold, y_train_fold)
             
-            train_acc = model.score(X_train_selected, y_train_fold)
-            val_acc = model.score(X_val_selected, y_val_fold)
+            train_acc = model.score(X_train_fold, y_train_fold)
+            val_acc = model.score(X_val_fold, y_val_fold)
             
             val_accs.append(val_acc)
             overfit_gaps.append(train_acc - val_acc)
@@ -420,18 +412,18 @@ def test_different_k_values(X, y, df, config, k_values, n_folds=5):
         std_overfit = np.std(overfit_gaps)
         
         results.append({
-            'k': k,
+            'alpha': alpha,
             'mean_val_acc': mean_val_acc,
             'std_val_acc': std_val_acc,
             'mean_overfit': mean_overfit,
             'std_overfit': std_overfit
         })
         
-        print(f"{k:<8} {mean_val_acc:<15.4f} {std_val_acc:<15.4f} {mean_overfit:<15.4f} {std_overfit:<15.4f}")
+        print(f"{alpha:<12.2f} {mean_val_acc:<15.4f} {std_val_acc:<15.4f} {mean_overfit:<15.4f} {std_overfit:<15.4f}")
     
-    # Find best k
+    # Find best alpha
     best_result = max(results, key=lambda x: x['mean_val_acc'])
-    print(f"\nBest k: {best_result['k']} (Val Acc: {best_result['mean_val_acc']:.4f})")
+    print(f"\nBest alpha: {best_result['alpha']} (Val Acc: {best_result['mean_val_acc']:.4f})")
     
     return results
 
@@ -441,6 +433,7 @@ def main_cv_analysis():
     """
     print("="*80)
     print("COMPREHENSIVE CROSS-VALIDATION ANALYSIS")
+    print("Multinomial Naive Bayes with Text Features (Count Vectorization)")
     print("FIXED: Student-Grouped CV (No Data Leakage)")
     print("="*80)
     
@@ -468,15 +461,13 @@ def main_cv_analysis():
     print(f"   Test students: {test_df['student_id'].nunique()}")
     
     # Preprocess train+val data
-    print(f"\n3. Preprocessing data with config: {BEST_CONFIG['feature_combo']}...")
+    print(f"\n3. Preprocessing data with text features (CountVectorizer)...")
     # Clean the dataframe first (dropna) to match what preprocess does
     train_val_df_clean = train_val_df.dropna().reset_index(drop=True)
     
     X_train_val, y_train_val, encoders = preprocess(
         train_val_df_clean,
-        max_features=20,
-        use_tfidf=True,
-        feature_combo=BEST_CONFIG['feature_combo'],
+        max_features=BEST_CONFIG['max_features'],
         fitted_encoders=None
     )
     print(f"   Feature matrix shape: {X_train_val.shape}")
@@ -492,10 +483,10 @@ def main_cv_analysis():
     print(f"\n4. Running 5-fold cross-validation with best configuration...")
     cv_results = detailed_cross_validation(X_train_val, y_train_val, train_val_df_clean, BEST_CONFIG, n_folds=5)
     
-    # Test different k values
-    print(f"\n5. Testing different k values around optimal k={BEST_CONFIG['k']}...")
-    k_values = [11, 15, 19, 21, 23, 25, 31, 41]
-    k_results = test_different_k_values(X_train_val, y_train_val, train_val_df_clean, BEST_CONFIG, k_values, n_folds=5)
+    # Test different alpha values
+    print(f"\n5. Testing different alpha values for smoothing...")
+    alpha_values = [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+    alpha_results = test_different_alpha_values(X_train_val, y_train_val, train_val_df_clean, alpha_values, n_folds=5)
     
     # Final evaluation on held-out test set
     print(f"\n{'='*80}")
@@ -505,28 +496,20 @@ def main_cv_analysis():
     # Preprocess test data
     X_test, y_test = preprocess(
         test_df,
-        max_features=20,
-        use_tfidf=True,
-        feature_combo=BEST_CONFIG['feature_combo'],
+        max_features=BEST_CONFIG['max_features'],
         fitted_encoders=encoders
     )
     
-    # Apply feature selection
-    selector = SelectKBest(score_func=f_classif, k=min(BEST_CONFIG['n_features'], X_train_val.shape[1]))
-    X_train_val_selected = selector.fit_transform(X_train_val, y_train_val)
-    X_test_selected = selector.transform(X_test)
-    
     # Train final model on all train+val data
-    final_model = KNeighborsClassifier(
-        n_neighbors=BEST_CONFIG['k'],
-        metric=BEST_CONFIG['distance'],
-        weights=BEST_CONFIG['weight']
+    final_model = MultinomialNB(
+        alpha=BEST_CONFIG['alpha'],
+        fit_prior=BEST_CONFIG['fit_prior']
     )
-    final_model.fit(X_train_val_selected, y_train_val)
+    final_model.fit(X_train_val, y_train_val)
     
     # Evaluate on test set
-    y_train_val_pred = final_model.predict(X_train_val_selected)
-    y_test_pred = final_model.predict(X_test_selected)
+    y_train_val_pred = final_model.predict(X_train_val)
+    y_test_pred = final_model.predict(X_test)
     
     # Detect if binary or multiclass
     unique_labels = np.unique(y_train_val)
@@ -547,8 +530,10 @@ def main_cv_analysis():
     print(f"  Overfitting Gap:    {train_val_acc - test_acc:.4f}")
     
     cm_test = confusion_matrix(y_test, y_test_pred)
-    print(f"\nTest Set Confusion Matrix:")
-    print(cm_test)
+    
+    # Print formatted confusion matrix
+    unique_test_labels = np.unique(y_test)
+    print_confusion_matrix(cm_test, unique_test_labels)
     
     # Summary
     print(f"\n{'='*80}")
@@ -568,7 +553,7 @@ def main_cv_analysis():
     print("No data leakage - students kept together in folds!")
     print(f"{'='*80}")
     
-    return cv_results, k_results, final_model
+    return cv_results, alpha_results, final_model
 
 if __name__ == "__main__":
-    cv_results, k_results, model = main_cv_analysis()
+    cv_results, alpha_results, model = main_cv_analysis()
