@@ -2,6 +2,8 @@
 Comprehensive Cross-Validation Analysis
 Tests the best model configuration with extensive cross-validation
 to assess stability and get unbiased performance estimates.
+
+FIXED: Now properly groups by student_id to prevent data leakage.
 """
 
 import numpy as np
@@ -161,13 +163,68 @@ def split(df, train_ratio=0.8, val_ratio=0.1, random_state=42):
     
     return train_df, val_df, test_df
 
-def detailed_cross_validation(X, y, config, n_folds=10):
+def create_student_cv_folds(df, n_folds=10, random_state=42):
+    """
+    Create cross-validation folds that keep all responses from the same student together.
+    
+    Args:
+        df: DataFrame with 'student_id' and 'label' columns
+        n_folds: Number of folds
+        random_state: Random seed
+    
+    Returns:
+        List of (train_indices, val_indices) tuples
+    """
+    # Get unique students and their labels
+    student_labels = df.groupby('student_id')['label'].first()
+    unique_students = student_labels.index.values
+    student_label_map = student_labels.to_dict()
+    
+    # Shuffle students
+    np.random.seed(random_state)
+    shuffled_students = np.random.permutation(unique_students)
+    
+    # Try to balance labels across folds (approximate stratification by student)
+    # Group students by their label
+    label_to_students = {}
+    for student in shuffled_students:
+        label = student_label_map[student]
+        if label not in label_to_students:
+            label_to_students[label] = []
+        label_to_students[label].append(student)
+    
+    # Distribute students across folds trying to balance labels
+    folds = [[] for _ in range(n_folds)]
+    for label, students in label_to_students.items():
+        for i, student in enumerate(students):
+            folds[i % n_folds].append(student)
+    
+    # Create train/val splits
+    cv_splits = []
+    for val_fold_idx in range(n_folds):
+        val_students = set(folds[val_fold_idx])
+        train_students = set()
+        for train_fold_idx in range(n_folds):
+            if train_fold_idx != val_fold_idx:
+                train_students.update(folds[train_fold_idx])
+        
+        # Get row indices for these students
+        train_indices = df[df['student_id'].isin(train_students)].index.values
+        val_indices = df[df['student_id'].isin(val_students)].index.values
+        
+        cv_splits.append((train_indices, val_indices))
+    
+    return cv_splits
+
+def detailed_cross_validation(X, y, df, config, n_folds=10):
     """
     Perform detailed k-fold cross-validation with per-fold reporting.
+    FIXED: Now splits by student_id to prevent data leakage.
     
     Args:
         X: Feature matrix
         y: Labels
+        df: Original dataframe (needed for student_id)
         config: Model configuration dictionary
         n_folds: Number of CV folds
     
@@ -175,7 +232,7 @@ def detailed_cross_validation(X, y, config, n_folds=10):
         Dictionary with detailed CV results
     """
     print(f"\n{'='*80}")
-    print(f"DETAILED {n_folds}-FOLD CROSS-VALIDATION")
+    print(f"DETAILED {n_folds}-FOLD CROSS-VALIDATION (Student-Grouped)")
     print(f"{'='*80}")
     
     # Create the model
@@ -185,19 +242,20 @@ def detailed_cross_validation(X, y, config, n_folds=10):
         weights=config['weight']
     )
     
-    # Create stratified k-fold
-    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    # Create student-grouped k-fold splits
+    cv_splits = create_student_cv_folds(df, n_folds=n_folds, random_state=42)
     
     # Store results for each fold
     fold_results = []
     all_y_true = []
     all_y_pred = []
     
-    print(f"\nRunning {n_folds}-fold cross-validation...")
+    print(f"\nRunning {n_folds}-fold cross-validation (grouping by student_id)...")
+    print(f"Note: Each student's 3 responses stay together in the same fold.")
     print(f"{'Fold':<6} {'Train Acc':<12} {'Val Acc':<12} {'Val F1':<12} {'Val Precision':<15} {'Val Recall':<12} {'Overfit Gap':<12}")
     print("-"*95)
     
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
+    for fold, (train_idx, val_idx) in enumerate(cv_splits, 1):
         # Split data
         X_train_fold, X_val_fold = X[train_idx], X[val_idx]
         y_train_fold, y_val_fold = y[train_idx], y[val_idx]
@@ -301,22 +359,25 @@ def detailed_cross_validation(X, y, config, n_folds=10):
         'confusion_matrix': cm
     }
 
-def test_different_k_values(X, y, config, k_values, n_folds=10):
+def test_different_k_values(X, y, df, config, k_values, n_folds=10):
     """
     Test different k values with cross-validation to find optimal k.
+    FIXED: Now splits by student_id to prevent data leakage.
     
     Args:
         X: Feature matrix
         y: Labels
+        df: Original dataframe (needed for student_id)
         config: Base configuration (will vary k)
         k_values: List of k values to test
         n_folds: Number of CV folds
     """
     print(f"\n{'='*80}")
-    print(f"TESTING DIFFERENT K VALUES")
+    print(f"TESTING DIFFERENT K VALUES (Student-Grouped CV)")
     print(f"{'='*80}")
     
-    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    # Create student-grouped k-fold splits
+    cv_splits = create_student_cv_folds(df, n_folds=n_folds, random_state=42)
     
     results = []
     
@@ -334,7 +395,7 @@ def test_different_k_values(X, y, config, k_values, n_folds=10):
         val_accs = []
         overfit_gaps = []
         
-        for train_idx, val_idx in skf.split(X, y):
+        for train_idx, val_idx in cv_splits:
             # Split data
             X_train_fold, X_val_fold = X[train_idx], X[val_idx]
             y_train_fold, y_val_fold = y[train_idx], y[val_idx]
@@ -380,6 +441,7 @@ def main_cv_analysis():
     """
     print("="*80)
     print("COMPREHENSIVE CROSS-VALIDATION ANALYSIS")
+    print("FIXED: Student-Grouped CV (No Data Leakage)")
     print("="*80)
     
     # Load data
@@ -388,6 +450,12 @@ def main_cv_analysis():
     print(f"   Loaded {len(df)} samples")
     print(f"   Label distribution: {dict(df['label'].value_counts())}")
     
+    # Check student distribution
+    n_students = df['student_id'].nunique()
+    samples_per_student = df.groupby('student_id').size()
+    print(f"   Number of unique students: {n_students}")
+    print(f"   Samples per student: {samples_per_student.value_counts().to_dict()}")
+    
     # Split data (keep test set held out)
     print("\n2. Splitting data...")
     train_df, val_df, test_df = split(df)
@@ -395,18 +463,24 @@ def main_cv_analysis():
     # Combine train and val for cross-validation
     train_val_df = pd.concat([train_df, val_df], ignore_index=True)
     print(f"   Train+Val: {len(train_val_df)} samples (for CV)")
+    print(f"   Train+Val students: {train_val_df['student_id'].nunique()}")
     print(f"   Test: {len(test_df)} samples (held out)")
+    print(f"   Test students: {test_df['student_id'].nunique()}")
     
     # Preprocess train+val data
     print(f"\n3. Preprocessing data with config: {BEST_CONFIG['feature_combo']}...")
+    # Clean the dataframe first (dropna) to match what preprocess does
+    train_val_df_clean = train_val_df.dropna().reset_index(drop=True)
+    
     X_train_val, y_train_val, encoders = preprocess(
-        train_val_df,
+        train_val_df_clean,
         max_features=20,
         use_tfidf=True,
         feature_combo=BEST_CONFIG['feature_combo'],
         fitted_encoders=None
     )
     print(f"   Feature matrix shape: {X_train_val.shape}")
+    print(f"   Cleaned dataframe shape: {train_val_df_clean.shape}")
     
     # Detect classification type
     unique_labels = np.unique(y_train_val)
@@ -416,12 +490,12 @@ def main_cv_analysis():
     
     # Perform detailed 10-fold cross-validation
     print(f"\n4. Running 10-fold cross-validation with best configuration...")
-    cv_results = detailed_cross_validation(X_train_val, y_train_val, BEST_CONFIG, n_folds=10)
+    cv_results = detailed_cross_validation(X_train_val, y_train_val, train_val_df_clean, BEST_CONFIG, n_folds=10)
     
     # Test different k values
     print(f"\n5. Testing different k values around optimal k={BEST_CONFIG['k']}...")
     k_values = [11, 15, 19, 21, 23, 25, 31, 41]
-    k_results = test_different_k_values(X_train_val, y_train_val, BEST_CONFIG, k_values, n_folds=10)
+    k_results = test_different_k_values(X_train_val, y_train_val, train_val_df_clean, BEST_CONFIG, k_values, n_folds=10)
     
     # Final evaluation on held-out test set
     print(f"\n{'='*80}")
@@ -481,7 +555,7 @@ def main_cv_analysis():
     print("SUMMARY")
     print(f"{'='*80}")
     print(f"\nConfiguration: {BEST_CONFIG}")
-    print(f"\n10-Fold CV Results:")
+    print(f"\n10-Fold CV Results (Student-Grouped):")
     print(f"  Mean Val Accuracy:  {cv_results['mean_val_acc']:.4f} ± {cv_results['std_val_acc']:.4f}")
     print(f"  Mean Val F1 Score:  {cv_results['mean_val_f1']:.4f} ± {cv_results['std_val_f1']:.4f}")
     print(f"  Mean Overfit Gap:   {cv_results['mean_overfit_gap']:.4f} ± {cv_results['std_overfit_gap']:.4f}")
@@ -491,6 +565,7 @@ def main_cv_analysis():
     
     print(f"\n{'='*80}")
     print("ANALYSIS COMPLETE!")
+    print("No data leakage - students kept together in folds!")
     print(f"{'='*80}")
     
     return cv_results, k_results, final_model
