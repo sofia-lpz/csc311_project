@@ -258,7 +258,7 @@ def train(data_path_train, data_path_valid):
     """Train a single model with default parameters"""
     # model = TrainingForest(data_path_train, data_path_valid)
     # model.load_data()
-    df_train = pd.read_csv('train.csv')
+    df_train = pd.read_csv('train.csv') 
     df_valid = pd.read_csv('val.csv')
     X_train, y_train = de.preprocess(df_train)
     X_valid, y_valid = de.preprocess(df_valid)
